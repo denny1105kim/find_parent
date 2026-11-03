@@ -1,0 +1,159 @@
+rules_version = '2';
+
+// 접근 모델
+// ---------
+// 페어링은 `pairs/{pairId}` 문서가 유일한 권한 원천이다.
+//   - pairId 는 클라이언트가 만든 UUID (추측 불가)
+//   - guardianUid : 보호자(엄마 폰)의 익명 인증 UID. 문서를 만든 쪽.
+//   - patientUid  : 환자(아버님 폰)의 UID. QR 스캔 시 단 한 번만 기록된다(claim).
+//
+// 실시간 스트리밍을 없앴으므로 시그널링(sessions) 컬렉션은 더 이상 없다.
+// 대신 `pairs/{pairId}/requests/{requestId}` 문서가 명령·진행 상태·결과를 모두 담는다.
+//   보호자: 요청 생성(pending), 다 받은 뒤 delivered 로 표시하거나 삭제
+//   환자  : running/uploading/ready/failed 로 진행 상황만 갱신
+//
+// 중요: 모든 컬렉션에서 list(쿼리)를 막았다 — 단, requests 는 양쪽이 목록을 봐야 하므로
+// 페어 멤버에게만 허용한다. pairId 를 모르면 그 목록에도 접근할 수 없다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function pairData(pairId) {
+      return get(/databases/$(database)/documents/pairs/$(pairId)).data;
+    }
+
+    function isGuardian(pairId) {
+      return signedIn() && pairData(pairId).get('revoked', false) == false && pairData(pairId).guardianUid == request.auth.uid;
+    }
+
+    function isPatient(pairId) {
+      return signedIn() && pairData(pairId).get('revoked', false) == false && pairData(pairId).patientUid == request.auth.uid;
+    }
+
+    function isMember(pairId) {
+      return isGuardian(pairId) || isPatient(pairId);
+    }
+
+    // ---------------------------------------------------------------- pairs
+    match /pairs/{pairId} {
+
+      // 보호자가 페어를 만든다. 자기 UID 로만 만들 수 있고, 환자 자리는 비워 둔다.
+      function validCreate() {
+        return signedIn()
+          && request.resource.data.guardianUid == request.auth.uid
+          && request.resource.data.patientUid == null
+          && request.resource.data.keys().hasOnly(['guardianUid', 'patientUid', 'createdAt']);
+      }
+
+      // 환자가 QR 을 찍고 동의한 뒤 자신을 등록한다. 비어 있을 때 단 한 번만 가능하다.
+      function validClaim() {
+        return signedIn()
+          && resource.data.get('revoked', false) == false
+          && resource.data.patientUid == null
+          && request.resource.data.patientUid == request.auth.uid
+          && request.resource.data.guardianUid == resource.data.guardianUid
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['patientUid', 'consentAcceptedAt']);
+      }
+
+      // 환자는 자기 폰이 녹음·녹화까지 가능한 상태인지만 갱신한다.
+      function validPatientUpdate() {
+        return isPatient(pairId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['mediaReady', 'mediaReadyAt']);
+      }
+
+      function validCheckIn() {
+        return isPatient(pairId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checkIn', 'checkInAt'])
+          && request.resource.data.checkIn in ['okay', 'help']
+          && request.resource.data.checkInAt == request.time;
+      }
+      function validDeviceStatus() {
+        return isPatient(pairId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batteryPercent', 'charging', 'lastSeenAt'])
+          && request.resource.data.batteryPercent is int
+          && request.resource.data.batteryPercent >= -1 && request.resource.data.batteryPercent <= 100
+          && request.resource.data.charging is bool
+          && request.resource.data.lastSeenAt == request.time;
+      }
+
+      // 간병인은 "지금 위치를 보는 중"(watchingUntil) 신호만 갱신한다(배터리 최적화용).
+      function validGuardianWatching() {
+        return isGuardian(pairId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['watchingUntil']);
+      }
+
+      // Unclaimed QR codes can be checked; paired metadata is private to its members.
+      allow get: if signedIn() && (
+        resource.data.guardianUid == request.auth.uid
+        || resource.data.patientUid == request.auth.uid
+        || (resource.data.patientUid == null && resource.data.get('revoked', false) == false));
+      allow list: if false;              // 열거 금지
+      allow create: if validCreate();
+      allow update: if validClaim() || validPatientUpdate() || validGuardianWatching() || validCheckIn() || validDeviceStatus()
+        || (isMember(pairId) && request.resource.data.revoked == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked']));
+      allow delete: if false; // Keep a tombstone so this ID can never be reused.
+
+      // ------------------------------------------------------------ requests
+      match /requests/{requestId} {
+
+        // 보호자만 요청을 만든다. 항상 pending 으로 시작한다.
+        function validRequestCreate() {
+          return isGuardian(pairId)
+            && request.resource.data.status == 'pending'
+            && request.resource.data.type in
+                 ['audio', 'video_front', 'video_back', 'location'];
+        }
+
+        // 환자는 진행 상태와 결과만 쓴다. 요청 종류는 바꿀 수 없다.
+        function validPatientProgress() {
+          return isPatient(pairId)
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.status in
+                 ['running', 'uploading', 'ready', 'failed'];
+        }
+
+        // 보호자는 받아간 뒤 delivered 로만 바꾼다.
+        function validGuardianProgress() {
+          return isGuardian(pairId)
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.status == 'delivered'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+        }
+
+        allow get, list: if isMember(pairId);
+        allow create: if validRequestCreate();
+        allow update: if validPatientProgress() || validGuardianProgress();
+        allow delete: if isGuardian(pairId);
+      }
+    }
+
+    // ------------------------------------------------------------ locations
+    // 마지막으로 확인된 위치. 환자가 쓰고, 보호자가 읽는다.
+    // (새로고침 요청의 결과가 여기에도 남아, 보호자가 앱을 열면 바로 보인다.)
+    match /locations/{pairId} {
+      allow get: if isMember(pairId);
+      allow list: if false;
+      allow create, update: if isPatient(pairId);
+      allow delete: if isGuardian(pairId);
+    }
+
+    // --------------------------------------------------------------- tokens
+    // 환자 폰의 FCM 토큰. 실제 전송은 Cloud Function(Admin SDK, 규칙 우회)이 하므로
+    // 클라이언트에는 읽기를 열지 않는다.
+    match /tokens/{pairId} {
+      allow read: if false;
+      // 오직 'token' 필드만 쓰도록 형태를 고정한다(임의 필드 주입 차단).
+      allow create, update: if isPatient(pairId)
+        && request.resource.data.keys().hasOnly(['token'])
+        && request.resource.data.token is string;
+      allow delete: if isMember(pairId);
+    }
+  }
+}

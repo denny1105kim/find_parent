@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// 녹음·녹화 파일의 임시 우편함.
+//
+// 파일은 여기 오래 머물지 않는다. 아버님 폰이 올리고, 보호자 폰이 내려받아
+// **자기 폰 안에 보관한 뒤 서버 원본을 지운다.** 따라서 정상 흐름에서는 몇 분만 존재한다.
+// (보호자가 앱을 며칠 열지 않으면 남아 있을 수 있어, 보호자 앱이 3일 지난 것을 정리한다.)
+//
+// 권한 판단은 Firestore 의 `pairs/{pairId}` 문서를 그대로 따른다.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function pairData(pairId) {
+      return firestore.get(/databases/(default)/documents/pairs/$(pairId)).data;
+    }
+
+    function isGuardian(pairId) {
+      return request.auth != null && pairData(pairId).get('revoked', false) == false && pairData(pairId).guardianUid == request.auth.uid;
+    }
+
+    function isPatient(pairId) {
+      return request.auth != null && pairData(pairId).get('revoked', false) == false && pairData(pairId).patientUid == request.auth.uid;
+    }
+
+    match /clips/{pairId}/{fileName} {
+      // 간병인: 내려받고, 받은 뒤 지운다. list 는 연결 해제 시 남은 파일을 모두 지우기 위함.
+      allow read, list, delete: if isGuardian(pairId);
+
+      // 환자: 올리기만 한다. 15초 클립이므로 상한을 넉넉히 20MB 로 둔다.
+      allow write: if isPatient(pairId)
+        && request.resource.size < 20 * 1024 * 1024
+        && (request.resource.contentType.matches('audio/.*')
+            || request.resource.contentType.matches('video/.*'));
+    }
+
+    // 그 외 경로는 전면 차단.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

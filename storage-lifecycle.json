@@ -1,0 +1,10 @@
+{
+  "//": "clips/ 아래 파일을 3일 후 자동 삭제한다. 간병인 앱이 정리를 못 해도 서버가 강제로 지운다.",
+  "//apply": "gcloud storage buckets update gs://YOUR_STORAGE_BUCKET --lifecycle-file=storage-lifecycle.json",
+  "rule": [
+    {
+      "action": { "type": "Delete" },
+      "condition": { "age": 3, "matchesPrefix": ["clips/"] }
+    }
+  ]
+}

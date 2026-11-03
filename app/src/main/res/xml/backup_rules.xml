@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    자동 백업 규칙 (API 30 이하).
+
+    받아 둔 녹음·영상은 클라우드 백업에서 제외한다. "이 폰에만 저장된다"고 환자께
+    동의를 받았으므로, 구글 드라이브로 새어 나가면 그 약속이 깨진다.
+-->
+<full-backup-content>
+    <exclude domain="file" path="clips" />
+</full-backup-content>

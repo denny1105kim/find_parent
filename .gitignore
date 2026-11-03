@@ -1,0 +1,41 @@
+*.iml
+.gradle/
+.idea/
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+
+# 각 PC 로컬 설정(SDK 경로 등)은 커밋하지 않음
+local.properties
+
+# TURN 자격증명 등 실제 비밀값. secrets.properties.example 을 복사해서 쓴다.
+secrets.properties
+
+# Firebase 클라이언트 설정. 공개 저장소에 올리지 않는다.
+# google-services.json.example 을 복사해 본인 Firebase 프로젝트 값으로 채워 쓴다.
+# (안에 든 API 키는 클라이언트 키지만, 공개 저장소 노출 시 App Check/키 제한이 없으면
+#  프로젝트가 악용될 수 있어 커밋하지 않는다. SECURITY.md 1·4번 참고.)
+app/google-services.json
+
+# Cloud Functions 의존성
+functions/node_modules/
+
+.firebaserc
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pem
+*service-account*.json
+*serviceAccount*.json
+
+# Local dependencies and emulator logs
+node_modules/
+*-debug.log
+
+# Kotlin incremental compilation state
+.kotlin/

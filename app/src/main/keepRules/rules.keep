@@ -1,0 +1,23 @@
+# AGP 는 src/main/keepRules 아래 모든 keep 규칙 파일을 합쳐 R8 로 넘긴다.
+#   https://d.android.com/r/tools/r8/keep-rules
+
+# --- 카카오맵 -------------------------------------------------------------
+# 벡터맵 SDK 는 내부적으로 리플렉션/네이티브 브리지를 사용한다.
+# 난독화되면 지도가 릴리즈 빌드에서만 조용히 깨진다.
+-keep class com.kakao.vectormap.** { *; }
+-dontwarn com.kakao.vectormap.**
+
+# --- Firebase / Play Services --------------------------------------------
+# Firestore 는 우리 코드에서 Map 으로만 다루므로 모델 keep 은 필요 없지만,
+# 내부 리플렉션 경고는 억제한다.
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# CameraX 와 Media3 는 자체 consumer 규칙을 포함하므로 따로 keep 하지 않는다.
+
+# --- 우리 앱 --------------------------------------------------------------
+# Foreground Service / BroadcastReceiver / FirebaseMessagingService 는
+# 매니페스트에서 이름으로 참조되므로 AGP 가 자동으로 keep 하지만, 명시해 둔다.
+-keep class com.caregrandpapa.core.service.MonitoringService { *; }
+-keep class com.caregrandpapa.core.service.BootReceiver { *; }
+-keep class com.caregrandpapa.core.messaging.WakeMessagingService { *; }

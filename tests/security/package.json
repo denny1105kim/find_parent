@@ -1,0 +1,10 @@
+{
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.2.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=24.12.0"
+  }
+}
